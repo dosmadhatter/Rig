@@ -1,23 +1,47 @@
-# This is a template for a Python scraper on Morph (https://morph.io)
-# including some code snippets below that you should find helpful
+import requests
+from lxml import html
+import dataset
+from itertools import count
+from urlparse import urljoin
+from datetime import datetime
 
-# import scraperwiki
-# import lxml.html
-#
-# # Read in a page
-# html = scraperwiki.scrape("http://foo.com")
-#
-# # Find something on the page using css selectors
-# root = lxml.html.fromstring(html)
-# root.cssselect("div[align='left']")
-#
-# # Write out to the sqlite database using scraperwiki library
-# scraperwiki.sqlite.save(unique_keys=['name'], data={"name": "susan", "occupation": "software developer"})
-#
-# # An arbitrary query against the database
-# scraperwiki.sql.select("* from data where 'name'='peter'")
 
-# You don't have to do things with the ScraperWiki and lxml libraries. You can use whatever libraries are installed
-# on Morph for Python (https://github.com/openaustralia/morph-docker-python/blob/master/pip_requirements.txt) and all that matters
-# is that your final data is written to an Sqlite database called data.sqlite in the current working directory which
-# has at least a table called data.
+BASE_URL = 'http://www.rigzone.com/data/results.asp?sortField=&sortDir=1&P=%s&Rig_Name=&RWD_Max=-1&RWD_Min=-1&Region_ID=-1&Rig_Type_ID=-1&Manager_ID=-1&Rig_Status_ID=-1&Operator_ID=-1'
+engine = dataset.connect('sqlite:///data.sqlite')
+rz_table = engine['data']
+
+
+def parse_rig(url):
+    url = urljoin(BASE_URL, url)
+    res = requests.get(url)
+    doc = html.fromstring(res.content)
+    
+    data = {'url': url, 'updated': datetime.utcnow()}
+    for table in doc.findall('.//table//table'):
+        for row in table.findall('.//tr'):
+            cols = row.findall('./td')
+            if len(cols) != 2:
+                continue
+            header, value = cols
+            header = header.text_content().strip()
+            header = header.replace(':', '').strip().lower().replace(' ', '_')
+            value = value.text_content().strip()
+            data[header] = value
+    print data
+    rz_table.upsert(data, ['url'])
+
+
+
+def list_rigs():
+    for i in count(1):
+        url = BASE_URL % i
+        res = requests.get(url)
+        if not 'results.asp' in res.url:
+            break
+        doc = html.fromstring(res.content)
+        for a in doc.findall('.//table//a'):
+            if 'offshore_drilling_rigs' in a.get('href'):
+                parse_rig(a.get('href'))
+
+if __name__ == '__main__':
+    list_rigs()
